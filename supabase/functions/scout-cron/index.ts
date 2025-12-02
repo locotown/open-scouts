@@ -53,6 +53,64 @@ serve(async (req) => {
       console.log("No stuck executions found");
     }
 
+    // Disable scouts for users who haven't logged in for 30+ days
+    console.log("Checking for inactive users (30+ days since last login)...");
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+    // Get unique user_ids that have active scouts
+    const { data: activeScoutUsers, error: scoutUsersError } = await supabase
+      .from("scouts")
+      .select("user_id")
+      .eq("is_active", true);
+
+    if (scoutUsersError) {
+      console.error("Error fetching scout users:", scoutUsersError.message);
+    } else if (activeScoutUsers && activeScoutUsers.length > 0) {
+      // Get unique user IDs
+      const uniqueUserIds = [...new Set(activeScoutUsers.map((s: { user_id: string }) => s.user_id))];
+      const inactiveUserIds: string[] = [];
+
+      // Check each user's last sign in via admin API
+      for (const userId of uniqueUserIds) {
+        try {
+          const { data: { user }, error: userError } = await supabase.auth.admin.getUserById(userId);
+          if (userError) {
+            console.error(`Error fetching user ${userId}:`, userError.message);
+            continue;
+          }
+          if (user?.last_sign_in_at) {
+            const lastSignIn = new Date(user.last_sign_in_at);
+            if (lastSignIn < thirtyDaysAgo) {
+              inactiveUserIds.push(userId);
+            }
+          }
+        } catch (err) {
+          console.error(`Error checking user ${userId}:`, err);
+        }
+      }
+
+      if (inactiveUserIds.length > 0) {
+        console.log(`Found ${inactiveUserIds.length} inactive user(s), disabling their scouts...`);
+
+        const { data: disabledScouts, error: disableError } = await supabase
+          .from("scouts")
+          .update({ is_active: false })
+          .in("user_id", inactiveUserIds)
+          .eq("is_active", true)
+          .select("id");
+
+        if (disableError) {
+          console.error("Error disabling scouts for inactive users:", disableError.message);
+        } else {
+          console.log(`Disabled ${disabledScouts?.length || 0} scout(s) for inactive users`);
+        }
+      } else {
+        console.log("No inactive users found among active scout owners");
+      }
+    } else {
+      console.log("No active scouts to check");
+    }
+
     // Check if a specific scoutId was provided in query params
     const url = new URL(req.url);
     const scoutId = url.searchParams.get("scoutId");

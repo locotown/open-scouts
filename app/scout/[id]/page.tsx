@@ -86,9 +86,13 @@ export default function ScoutPage() {
 
   const { messages, setMessages, sendMessage, status, regenerate } = useChat({
     id: scoutId,
+    initialMessages: [], // Prevent automatic fetching
     onFinish: () => {
       // Reload current scout after each message to update status indicators
       loadCurrentScout();
+    },
+    onError: (error) => {
+      console.error("Chat error:", error);
     },
   });
 
@@ -224,24 +228,17 @@ export default function ScoutPage() {
   };
 
   const activateScout = async () => {
-    console.log("Activate scout clicked", { scoutId, currentScout });
-
     if (!scoutId || scoutId === "new" || !currentScout) {
-      console.log("Early return: invalid scout", { scoutId, currentScout });
       return;
     }
 
     // If scout is already active, just navigate to executions page without autoRun
     if (currentScout.is_active) {
-      console.log(
-        "Scout already active, navigating to executions page without autoRun",
-      );
       router.push(`/${scoutId}`);
       return;
     }
 
     // Activate the scout
-    console.log("Updating scout to is_active=true");
     const { error } = await supabase
       .from("scouts")
       .update({ is_active: true })
@@ -252,7 +249,6 @@ export default function ScoutPage() {
       return;
     }
 
-    console.log("Scout activated, navigating to executions page");
     // Navigate to scout's execution page with autoRun parameter
     router.push(`/${scoutId}?autoRun=true`);
   };
@@ -312,6 +308,9 @@ export default function ScoutPage() {
     ) {
       hasAutoSubmitted.current = true;
 
+      // Clean up URL parameter using history API (doesn't trigger React re-render)
+      window.history.replaceState({}, "", `/scout/${scoutId}`);
+
       // Send the initial query
       sendMessage(
         {
@@ -324,9 +323,6 @@ export default function ScoutPage() {
           },
         },
       );
-
-      // Clean up URL parameter
-      router.replace(`/scout/${scoutId}`, { scroll: false });
     }
   }, [
     messagesLoaded,
@@ -335,7 +331,6 @@ export default function ScoutPage() {
     scoutId,
     location,
     sendMessage,
-    router,
   ]);
 
   // Track when button becomes enabled to trigger animation
@@ -530,17 +525,6 @@ export default function ScoutPage() {
                         currentScout.location &&
                         currentScout.search_queries?.length > 0 &&
                         currentScout.frequency;
-
-                      console.log("Scout completeness check:", {
-                        isComplete,
-                        title: !!currentScout.title,
-                        goal: !!currentScout.goal,
-                        description: !!currentScout.description,
-                        location: !!currentScout.location,
-                        search_queries:
-                          currentScout.search_queries?.length || 0,
-                        frequency: !!currentScout.frequency,
-                      });
 
                       const buttonText = currentScout.is_active
                         ? "Update Scout"
