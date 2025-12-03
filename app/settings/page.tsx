@@ -2,15 +2,35 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 import Button from "@/components/ui/shadcn/button";
 import { Input } from "@/components/ui/shadcn-default/input";
 import { Skeleton } from "@/components/ui/shadcn/skeleton";
-import { Check, AlertCircle, Mail, Bell } from "lucide-react";
+import {
+  Check,
+  AlertCircle,
+  Mail,
+  Bell,
+  Flame,
+  RefreshCw,
+  CheckCircle2,
+  Clock,
+  XCircle,
+  AlertTriangle,
+} from "lucide-react";
 import { Connector } from "@/components/shared/layout/curvy-rect";
 
-const PREFERENCES_ID = "00000000-0000-0000-0000-000000000001";
+type FirecrawlKeyStatus = "pending" | "active" | "fallback" | "failed" | "invalid";
+
+interface FirecrawlInfo {
+  status: FirecrawlKeyStatus;
+  hasKey: boolean;
+  createdAt: string | null;
+  error: string | null;
+}
 
 export default function SettingsPage() {
+  const { user } = useAuth();
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -23,31 +43,56 @@ export default function SettingsPage() {
   );
   const [testMessage, setTestMessage] = useState("");
 
-  // Load current preferences
+  // Firecrawl state
+  const [firecrawlInfo, setFirecrawlInfo] = useState<FirecrawlInfo | null>(null);
+  const [regeneratingKey, setRegeneratingKey] = useState(false);
+  const [regenerateMessage, setRegenerateMessage] = useState("");
+
+  // Load current preferences and Firecrawl info
   useEffect(() => {
     const loadPreferences = async () => {
+      if (!user?.id) {
+        setLoading(false);
+        return;
+      }
+
       setLoading(true);
       try {
         const { data } = await supabase
           .from("user_preferences")
-          .select("*")
-          .eq("id", PREFERENCES_ID)
+          .select("notification_email, firecrawl_api_key, firecrawl_key_status, firecrawl_key_created_at, firecrawl_key_error")
+          .eq("user_id", user.id)
           .maybeSingle();
 
         if (data) {
           setEmail(data.notification_email || "");
+          setFirecrawlInfo({
+            status: data.firecrawl_key_status || "pending",
+            hasKey: !!data.firecrawl_api_key,
+            createdAt: data.firecrawl_key_created_at,
+            error: data.firecrawl_key_error,
+          });
+        } else {
+          // No preferences yet - set defaults
+          setFirecrawlInfo({
+            status: "pending",
+            hasKey: false,
+            createdAt: null,
+            error: null,
+          });
         }
       } catch {
-        // Silently handle any exceptions - preferences just won't be loaded
-        // This is expected if the table doesn't exist yet or has RLS policies
+        // Silently handle any exceptions
       }
       setLoading(false);
     };
 
     loadPreferences();
-  }, []);
+  }, [user?.id]);
 
   const savePreferences = async () => {
+    if (!user?.id) return;
+
     setSaving(true);
     setSaveStatus("idle");
 
@@ -60,15 +105,16 @@ export default function SettingsPage() {
 
     try {
       const { error } = await supabase.from("user_preferences").upsert({
-        id: PREFERENCES_ID,
+        user_id: user.id,
         notification_email: email || null,
+      }, {
+        onConflict: "user_id",
       });
 
       if (error) {
         setSaveStatus("error");
       } else {
         setSaveStatus("success");
-        // Reset success message after 3 seconds
         setTimeout(() => setSaveStatus("idle"), 3000);
       }
     } catch {
@@ -108,7 +154,6 @@ export default function SettingsPage() {
       } else {
         setTestStatus("success");
         setTestMessage("Test email sent! Check your inbox.");
-        // Reset success message after 5 seconds
         setTimeout(() => {
           setTestStatus("idle");
           setTestMessage("");
@@ -122,6 +167,90 @@ export default function SettingsPage() {
     }
 
     setSendingTest(false);
+  };
+
+  const regenerateFirecrawlKey = async () => {
+    if (!user?.id || !user?.email) return;
+
+    setRegeneratingKey(true);
+    setRegenerateMessage("");
+
+    try {
+      const response = await fetch("/api/firecrawl/regenerate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setRegenerateMessage(data.error || "Failed to regenerate key");
+      } else {
+        setRegenerateMessage("API key regenerated successfully!");
+        // Refresh the Firecrawl info
+        setFirecrawlInfo({
+          status: "active",
+          hasKey: true,
+          createdAt: new Date().toISOString(),
+          error: null,
+        });
+        setTimeout(() => setRegenerateMessage(""), 5000);
+      }
+    } catch (error) {
+      setRegenerateMessage(
+        error instanceof Error ? error.message : "Failed to regenerate key",
+      );
+    }
+
+    setRegeneratingKey(false);
+  };
+
+  const getStatusDisplay = (status: FirecrawlKeyStatus) => {
+    switch (status) {
+      case "active":
+        return {
+          icon: <CheckCircle2 className="w-16 h-16" />,
+          text: "Connected",
+          color: "text-accent-forest",
+          bgColor: "bg-accent-forest/10",
+          borderColor: "border-accent-forest/20",
+        };
+      case "pending":
+        return {
+          icon: <Clock className="w-16 h-16" />,
+          text: "Pending",
+          color: "text-accent-honey",
+          bgColor: "bg-accent-honey/10",
+          borderColor: "border-accent-honey/20",
+        };
+      case "fallback":
+        return {
+          icon: <AlertTriangle className="w-16 h-16" />,
+          text: "Using Shared Key",
+          color: "text-accent-honey",
+          bgColor: "bg-accent-honey/10",
+          borderColor: "border-accent-honey/20",
+        };
+      case "failed":
+      case "invalid":
+        return {
+          icon: <XCircle className="w-16 h-16" />,
+          text: status === "failed" ? "Setup Failed" : "Key Invalid",
+          color: "text-accent-crimson",
+          bgColor: "bg-accent-crimson/10",
+          borderColor: "border-accent-crimson/20",
+        };
+      default:
+        return {
+          icon: <Clock className="w-16 h-16" />,
+          text: "Unknown",
+          color: "text-black-alpha-48",
+          bgColor: "bg-black-alpha-4",
+          borderColor: "border-border-muted",
+        };
+    }
   };
 
   return (
@@ -146,12 +275,139 @@ export default function SettingsPage() {
               Settings
             </h1>
             <p className="text-body-large text-black-alpha-56 mt-4">
-              Configure your notification preferences
+              Configure your account preferences
             </p>
           </div>
         </div>
 
-        {/* Section label */}
+        {/* Firecrawl Integration Section */}
+        <div className="py-24 lg:py-32 relative">
+          <div className="h-1 bottom-0 absolute w-screen left-[calc(50%-50vw)] bg-border-faint" />
+
+          <div className="flex items-center gap-16">
+            <div className="w-2 h-16 bg-heat-100" />
+            <div className="flex gap-12 items-center text-mono-x-small text-black-alpha-32 font-mono">
+              <Flame className="w-14 h-14" />
+              <span className="uppercase tracking-wider">Firecrawl Integration</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Firecrawl Content */}
+        <div className="pb-32">
+          {loading ? (
+            <div className="bg-white rounded-12 border border-border-faint p-24 max-w-600">
+              <div className="space-y-16">
+                <Skeleton className="h-16 w-128" />
+                <Skeleton className="h-40 w-full rounded-8" />
+              </div>
+            </div>
+          ) : (
+            <div className="bg-white rounded-12 border border-border-faint overflow-hidden max-w-600">
+              <div className="p-24 space-y-16">
+                <div>
+                  <h3 className="text-label-medium font-semibold text-accent-black mb-8">
+                    Web Scraping Connection
+                  </h3>
+                  <p className="text-body-small text-black-alpha-48 mb-16">
+                    Your scouts use Firecrawl to search and scrape web content. Each account has a dedicated API key for tracking and reliability.
+                  </p>
+
+                  {/* Status Badge */}
+                  {firecrawlInfo && (
+                    <div className="space-y-12">
+                      <div className="flex items-center gap-12">
+                        <span className="text-body-small text-black-alpha-56">Status:</span>
+                        {(() => {
+                          const display = getStatusDisplay(firecrawlInfo.status);
+                          return (
+                            <div
+                              className={`inline-flex items-center gap-8 px-12 py-6 rounded-6 ${display.bgColor} ${display.color} border ${display.borderColor}`}
+                            >
+                              {display.icon}
+                              <span className="text-label-small font-medium">
+                                {display.text}
+                              </span>
+                            </div>
+                          );
+                        })()}
+                      </div>
+
+                      {/* Created At */}
+                      {firecrawlInfo.createdAt && firecrawlInfo.status === "active" && (
+                        <p className="text-body-small text-black-alpha-48">
+                          Connected since {new Date(firecrawlInfo.createdAt).toLocaleDateString()}
+                        </p>
+                      )}
+
+                      {/* Error Message */}
+                      {firecrawlInfo.error && (firecrawlInfo.status === "failed" || firecrawlInfo.status === "invalid") && (
+                        <div className="flex items-start gap-8 p-12 rounded-8 bg-accent-crimson/10 border border-accent-crimson/20">
+                          <AlertCircle className="w-16 h-16 text-accent-crimson mt-2 shrink-0" />
+                          <span className="text-body-small text-accent-crimson">
+                            {firecrawlInfo.error}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Regenerate Button - show for failed, invalid, or pending states */}
+                      {(firecrawlInfo.status === "failed" ||
+                        firecrawlInfo.status === "invalid" ||
+                        firecrawlInfo.status === "pending") && (
+                        <div className="pt-8">
+                          <Button
+                            onClick={regenerateFirecrawlKey}
+                            disabled={regeneratingKey}
+                            variant="secondary"
+                            className="flex items-center gap-8"
+                          >
+                            {regeneratingKey ? (
+                              <>
+                                <div className="animate-spin rounded-full h-16 w-16 border-2 border-black-alpha-32 border-t-transparent" />
+                                Connecting...
+                              </>
+                            ) : (
+                              <>
+                                <RefreshCw className="w-16 h-16" />
+                                {firecrawlInfo.status === "pending" ? "Connect Now" : "Reconnect"}
+                              </>
+                            )}
+                          </Button>
+
+                          {regenerateMessage && (
+                            <div
+                              className={`flex items-start gap-8 mt-12 p-12 rounded-8 ${
+                                regenerateMessage.includes("success")
+                                  ? "bg-accent-forest/10 text-accent-forest border border-accent-forest/20"
+                                  : "bg-accent-crimson/10 text-accent-crimson border border-accent-crimson/20"
+                              }`}
+                            >
+                              {regenerateMessage.includes("success") ? (
+                                <Check className="w-16 h-16 mt-2 shrink-0" />
+                              ) : (
+                                <AlertCircle className="w-16 h-16 mt-2 shrink-0" />
+                              )}
+                              <span className="text-body-small">{regenerateMessage}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Info Footer */}
+              <div className="px-24 py-16 border-t border-border-faint bg-background-base">
+                <p className="text-mono-x-small font-mono text-black-alpha-32">
+                  Powered by Firecrawl - Web scraping for AI applications
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Notifications Section Label */}
         <div className="py-24 lg:py-32 relative">
           <div className="h-1 bottom-0 absolute w-screen left-[calc(50%-50vw)] bg-border-faint" />
 
@@ -164,7 +420,7 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Content */}
+        {/* Notifications Content */}
         <div className="pb-64">
           {loading ? (
             <div className="bg-white rounded-12 border border-border-faint p-24 max-w-600">
@@ -228,8 +484,8 @@ export default function SettingsPage() {
                         <div
                           className={`flex items-start gap-8 mt-12 p-12 rounded-8 ${
                             testStatus === "success"
-                              ? "bg-green-500/10 text-green-700 border border-green-500/20"
-                              : "bg-heat-100/10 text-heat-100 border border-heat-100/20"
+                              ? "bg-accent-forest/10 text-accent-forest border border-accent-forest/20"
+                              : "bg-accent-crimson/10 text-accent-crimson border border-accent-crimson/20"
                           }`}
                         >
                           {testStatus === "success" ? (
@@ -264,7 +520,7 @@ export default function SettingsPage() {
                   </Button>
 
                   {saveStatus === "success" && (
-                    <div className="flex items-center gap-8 text-green-600">
+                    <div className="flex items-center gap-8 text-accent-forest">
                       <Check className="w-16 h-16" />
                       <span className="text-body-small font-medium">
                         Saved!
@@ -273,7 +529,7 @@ export default function SettingsPage() {
                   )}
 
                   {saveStatus === "error" && (
-                    <div className="flex items-center gap-8 text-red-500">
+                    <div className="flex items-center gap-8 text-accent-crimson">
                       <AlertCircle className="w-16 h-16" />
                       <span className="text-body-small font-medium">
                         {email && !isValidEmail(email)

@@ -1,6 +1,6 @@
 // Database helper functions
 
-import type { Scout } from "./types.ts";
+import type { Scout, FirecrawlKeyResult } from "./types.ts";
 
 // Helper to check if a scout should run based on frequency and last_run_at
 export function shouldRunScout(scout: Scout): boolean {
@@ -104,4 +104,122 @@ export async function updateStep(
     },
     `updateStep (execution: ${executionId}, step: ${stepNumber}, status: ${updates.status || 'unknown'})`
   );
+}
+
+/**
+ * Gets the Firecrawl API key for a user.
+ * Returns the user's key if available and active, otherwise falls back to the partner key.
+ */
+export async function getFirecrawlKeyForUser(
+  supabase: any,
+  userId: string,
+  fallbackKey: string
+): Promise<FirecrawlKeyResult> {
+  try {
+    const { data, error } = await supabase
+      .from("user_preferences")
+      .select("firecrawl_api_key, firecrawl_key_status")
+      .eq("user_id", userId)
+      .single();
+
+    if (error) {
+      console.log(`[Firecrawl] No preferences found for user ${userId}, using fallback`);
+      return {
+        apiKey: fallbackKey,
+        usedFallback: true,
+        fallbackReason: "no_preferences_record",
+      };
+    }
+
+    const { firecrawl_api_key, firecrawl_key_status } = data;
+
+    // If key exists and is active, use it
+    if (firecrawl_api_key && firecrawl_key_status === "active") {
+      console.log(`[Firecrawl] Using user's personal API key`);
+      return {
+        apiKey: firecrawl_api_key,
+        usedFallback: false,
+      };
+    }
+
+    // Otherwise, use fallback and log the reason
+    let fallbackReason: string;
+    if (!firecrawl_api_key) {
+      fallbackReason = "no_api_key";
+    } else if (firecrawl_key_status === "pending") {
+      fallbackReason = "key_pending";
+    } else if (firecrawl_key_status === "failed") {
+      fallbackReason = "key_creation_failed";
+    } else if (firecrawl_key_status === "invalid") {
+      fallbackReason = "key_invalid";
+    } else {
+      fallbackReason = `status_${firecrawl_key_status || "unknown"}`;
+    }
+
+    console.log(`[Firecrawl] Using fallback key (reason: ${fallbackReason})`);
+    return {
+      apiKey: fallbackKey,
+      usedFallback: true,
+      fallbackReason,
+    };
+  } catch (error: any) {
+    console.error(`[Firecrawl] Error fetching user key: ${error.message}`);
+    return {
+      apiKey: fallbackKey,
+      usedFallback: true,
+      fallbackReason: `error: ${error.message}`,
+    };
+  }
+}
+
+/**
+ * Logs Firecrawl usage for monitoring purposes.
+ */
+export async function logFirecrawlUsage(
+  supabase: any,
+  params: {
+    userId: string;
+    scoutId: string;
+    executionId: string;
+    usedFallback: boolean;
+    fallbackReason?: string;
+    apiCallsCount?: number;
+  }
+): Promise<void> {
+  try {
+    await supabase.from("firecrawl_usage_logs").insert({
+      user_id: params.userId,
+      scout_id: params.scoutId,
+      execution_id: params.executionId,
+      used_fallback: params.usedFallback,
+      fallback_reason: params.fallbackReason || null,
+      api_calls_count: params.apiCallsCount || 1,
+    });
+  } catch (error: any) {
+    // Don't fail the main operation if logging fails
+    console.error("[Firecrawl] Failed to log usage:", error.message);
+  }
+}
+
+/**
+ * Marks a user's Firecrawl key as invalid after a 401 error.
+ * This triggers the fallback mechanism for future requests.
+ */
+export async function markFirecrawlKeyInvalid(
+  supabase: any,
+  userId: string,
+  reason: string
+): Promise<void> {
+  try {
+    await supabase
+      .from("user_preferences")
+      .update({
+        firecrawl_key_status: "invalid",
+        firecrawl_key_error: reason,
+      })
+      .eq("user_id", userId);
+    console.log(`[Firecrawl] Marked user ${userId} key as invalid: ${reason}`);
+  } catch (error: any) {
+    console.error("[Firecrawl] Failed to mark key as invalid:", error.message);
+  }
 }

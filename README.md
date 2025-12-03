@@ -161,7 +161,55 @@ To enable email notifications when scouts find results:
 2. Click **Send Test Email** to verify the configuration
 3. Check your inbox for the test email
 
-### 9. Run the Development Server
+### 9. Firecrawl Configuration
+
+Open Scouts uses [Firecrawl](https://firecrawl.dev) for web scraping and search. There are two ways to configure it:
+
+#### Option A: Standard API Key (Recommended for Contributors)
+
+This is the simplest setup - all users share a single API key:
+
+1. Sign up at [firecrawl.dev](https://firecrawl.dev)
+2. Get your API key from the [dashboard](https://www.firecrawl.dev/app/api-keys)
+3. Add to your `.env` file:
+   ```bash
+   FIRECRAWL_API_KEY=fc-your-key-here
+   ```
+4. Set the edge function secret:
+   ```bash
+   npx supabase secrets set FIRECRAWL_API_KEY=fc-your-key-here
+   ```
+
+#### Option B: Partner Integration (For Production Deployments)
+
+If you're deploying Open Scouts for multiple users and want per-user API key management:
+
+1. **Contact Firecrawl** to obtain a partner key
+2. Set your partner key in `.env`:
+   ```bash
+   FIRECRAWL_API_KEY=your-partner-key
+   ```
+3. Set the edge function secret:
+   ```bash
+   npx supabase secrets set FIRECRAWL_API_KEY=your-partner-key
+   ```
+
+**How Partner Integration Works:**
+- When users sign up, a unique Firecrawl API key is automatically created for them
+- Each user's usage is tracked separately
+- Keys are stored securely in the `user_preferences` table
+- If a user's key fails, the system automatically falls back to the shared partner key
+- Users can view their connection status in **Settings → Firecrawl Integration**
+
+**Benefits:**
+- Better usage tracking per user
+- Ability to revoke individual user keys
+- Automatic key provisioning on signup
+- Self-healing: invalid keys are detected and fallback kicks in
+
+**Note:** The partner integration is fully backwards compatible. If you don't have a partner key, the system works exactly like Option A with a shared key.
+
+### 10. Run the Development Server
 
 ```bash
 bun run dev  # or: npm run dev / pnpm run dev
@@ -215,7 +263,7 @@ When scouts find results, you'll automatically receive email alerts:
 - **AI Agent**: OpenAI GPT-4 with function calling (search & scrape tools)
 - **AI Summaries**: Auto-generated one-sentence summaries with vector embeddings for each successful execution
 - **Edge Function**: Deno-based serverless function that orchestrates agent execution
-- **Web Scraping**: Firecrawl API for search and content extraction
+- **Web Scraping**: Firecrawl API for search and content extraction (supports per-user API keys via partner integration)
 
 #### Scalable Dispatcher Architecture
 
@@ -243,6 +291,7 @@ pg_cron → dispatch_due_scouts() → finds due scouts → pg_net HTTP POST
 - **User Isolation**: Scouts, messages, and executions are all tied to authenticated users
 - **Secure Auth Flow**: OAuth tokens and sessions are managed by Supabase Auth
 - **Service Role**: Server-side operations (cron jobs, edge functions) use service role for privileged access
+- **API Key Storage**: Firecrawl API keys (when using partner integration) are stored server-side in `user_preferences` and never exposed to the client
 
 ## Build for Production
 

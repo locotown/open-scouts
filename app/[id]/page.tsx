@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { ScoutExecutionPanel } from "@/components/scout-execution-panel";
-import { Settings, Play, Trash2, Menu, Eye, Clock } from "lucide-react";
+import { Settings, Play, Trash2, Menu, Eye } from "lucide-react";
 import Button from "@/components/ui/shadcn/button";
 import { Skeleton } from "@/components/ui/shadcn/skeleton";
 import { Switch } from "@/components/ui/shadcn/switch";
@@ -389,17 +389,8 @@ export default function ExecutionsPage() {
                   loadingLabel={triggering ? "Starting..." : "Running..."}
                   title={isOnCooldown ? `Available in ${formatCooldown(cooldownRemaining)}` : undefined}
                 >
-                  {isOnCooldown ? (
-                    <>
-                      <Clock className="w-16 h-16" />
-                      {formatCooldown(cooldownRemaining)}
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-16 h-16" />
-                      Run Now
-                    </>
-                  )}
+                  <Play className="w-16 h-16" />
+                  {isOnCooldown ? formatCooldown(cooldownRemaining) : "Run Now"}
                 </Button>
 
                 <Button
@@ -494,17 +485,8 @@ export default function ExecutionsPage() {
               loadingLabel={triggering ? "Starting..." : "Running..."}
               className="w-full"
             >
-              {isOnCooldown ? (
-                <>
-                  <Clock className="w-16 h-16" />
-                  Available in {formatCooldown(cooldownRemaining)}
-                </>
-              ) : (
-                <>
-                  <Play className="w-16 h-16" />
-                  Run Now
-                </>
-              )}
+              <Play className="w-16 h-16" />
+              {isOnCooldown ? `Available in ${formatCooldown(cooldownRemaining)}` : "Run Now"}
             </Button>
 
             {/* Clear Executions Button */}

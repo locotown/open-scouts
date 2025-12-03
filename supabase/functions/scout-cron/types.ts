@@ -2,6 +2,7 @@
 
 export interface Scout {
   id: string;
+  user_id: string;
   title: string;
   description: string;
   goal: string;
@@ -14,6 +15,14 @@ export interface Scout {
   frequency: "hourly" | "every_3_days" | "weekly" | null;
   is_active: boolean;
   last_run_at: string | null;
+}
+
+export type FirecrawlKeyStatus = "pending" | "active" | "fallback" | "failed" | "invalid";
+
+export interface FirecrawlKeyResult {
+  apiKey: string;
+  usedFallback: boolean;
+  fallbackReason?: string;
 }
 
 export interface ScoutResponse {

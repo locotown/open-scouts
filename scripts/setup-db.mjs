@@ -27,7 +27,8 @@ async function runMigrations() {
     // Run base migrations
     const migrations = [
       'supabase/migrations/00000000000000_initial_schema.sql',
-      'supabase/migrations/00000000000001_add_auth.sql'
+      'supabase/migrations/00000000000001_add_auth.sql',
+      'supabase/migrations/20251203000000_add_firecrawl_integration.sql'
     ];
 
     for (const migrationPath of migrations) {
@@ -259,6 +260,25 @@ async function runMigrations() {
     console.log('   1. Go to Supabase Dashboard → Authentication → Providers → Email');
     console.log('   2. Enable Email provider (enabled by default)');
     console.log('   3. Configure email templates as needed\n');
+
+    // Firecrawl setup instructions
+    console.log('🔥 Firecrawl Integration Setup');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    console.log('This project uses Firecrawl for web scraping. You have two options:\n');
+    console.log('📝 Option 1: Standard API Key (Simple)');
+    console.log('   1. Sign up at https://www.firecrawl.dev/');
+    console.log('   2. Get your API key from https://www.firecrawl.dev/app/api-keys');
+    console.log('   3. Add to .env: FIRECRAWL_API_KEY=fc-your-key-here');
+    console.log('   4. Add to edge function secrets:');
+    console.log('      npx supabase secrets set FIRECRAWL_API_KEY=fc-your-key-here\n');
+    console.log('📝 Option 2: Partner Integration (Per-User Keys)');
+    console.log('   If you have a Firecrawl partner key, this enables automatic');
+    console.log('   per-user API key creation for better usage tracking:');
+    console.log('   1. Set your partner key in .env: FIRECRAWL_API_KEY=your-partner-key');
+    console.log('   2. Add to edge function secrets:');
+    console.log('      npx supabase secrets set FIRECRAWL_API_KEY=your-partner-key');
+    console.log('   3. Users will automatically get their own keys on signup\n');
+    console.log('   Note: Partner keys are obtained by contacting Firecrawl directly.\n');
   } catch (error) {
     console.error('❌ Error:', error.message);
     process.exit(1);

@@ -2,7 +2,13 @@
 
 import type { Scout, ScoutResponse } from "./types.ts";
 import { getMaxAge, isBlacklistedDomain } from "./constants.ts";
-import { createStep, updateStep } from "./helpers.ts";
+import {
+  createStep,
+  updateStep,
+  getFirecrawlKeyForUser,
+  logFirecrawlUsage,
+  markFirecrawlKeyInvalid,
+} from "./helpers.ts";
 import { executeSearchTool, executeScrapeTool } from "./tools.ts";
 import { sendScoutSuccessEmail } from "./email.ts";
 
@@ -57,15 +63,26 @@ export async function executeScoutAgent(scout: Scout, supabase: any): Promise<vo
 
   try {
     const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
-    const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
+    const FIRECRAWL_PARTNER_KEY = Deno.env.get("FIRECRAWL_API_KEY");
 
     if (!OPENAI_API_KEY) {
       throw new Error("OPENAI_API_KEY not configured");
     }
 
-    if (!FIRECRAWL_API_KEY) {
-      throw new Error("FIRECRAWL_API_KEY not configured");
+    if (!FIRECRAWL_PARTNER_KEY) {
+      throw new Error("FIRECRAWL_API_KEY (partner key) not configured");
     }
+
+    // Get the user's Firecrawl API key, with fallback to partner key
+    const firecrawlKeyResult = await getFirecrawlKeyForUser(
+      supabase,
+      scout.user_id,
+      FIRECRAWL_PARTNER_KEY
+    );
+    const FIRECRAWL_API_KEY = firecrawlKeyResult.apiKey;
+
+    // Track total API calls for usage logging
+    let firecrawlApiCallsCount = 0;
 
     // Calculate maxAge based on frequency
     const maxAgeMs = getMaxAge(scout.frequency);
@@ -357,12 +374,24 @@ REMINDER: Write your final response like a NEWS BRIEF. DO NOT mention your proce
                 ? scout.location.city
                 : undefined;
               toolResult = await executeSearchTool(toolArgs, FIRECRAWL_API_KEY, locationToUse, maxAgeMs);
+              firecrawlApiCallsCount++;
             } else if (toolName === "scrapeWebsite") {
               toolResult = await executeScrapeTool(toolArgs, FIRECRAWL_API_KEY, maxAgeMs);
+              firecrawlApiCallsCount++;
             }
 
             // Check if tool returned an error
             hasError = toolResult && typeof toolResult === 'object' && 'error' in toolResult;
+
+            // Check for 401 Unauthorized errors - indicates invalid API key
+            if (hasError && toolResult?.error?.includes('401')) {
+              console.error(`[Firecrawl] 401 error detected - marking user key as invalid`);
+              await markFirecrawlKeyInvalid(
+                supabase,
+                scout.user_id,
+                `Firecrawl returned 401: ${toolResult.error}`
+              );
+            }
           } catch (error: any) {
             console.error(`Tool execution error for ${toolName}:`, error);
             toolResult = { error: error.message, query: toolArgs.query || toolArgs.url };
@@ -635,6 +664,18 @@ REMINDER: Write your final response like a NEWS BRIEF. DO NOT mention your proce
       .from("scouts")
       .update({ last_run_at: new Date().toISOString() })
       .eq("id", scout.id);
+
+    // Log Firecrawl usage for monitoring
+    if (firecrawlApiCallsCount > 0) {
+      await logFirecrawlUsage(supabase, {
+        userId: scout.user_id,
+        scoutId: scout.id,
+        executionId,
+        usedFallback: firecrawlKeyResult.usedFallback,
+        fallbackReason: firecrawlKeyResult.fallbackReason,
+        apiCallsCount: firecrawlApiCallsCount,
+      });
+    }
 
     console.log(`Scout execution completed: ${scout.title}`);
   } catch (error: any) {
