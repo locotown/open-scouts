@@ -36,6 +36,7 @@ type UserData = {
   completedExecutions: number;
   failedExecutions: number;
   firecrawlStatus: string | null;
+  firecrawlCredits: number | null;
   hasLocation: boolean;
 };
 
@@ -311,6 +312,9 @@ export default function AdminPage() {
                       <th className="text-center px-16 py-12 text-label-small font-semibold text-black-alpha-56">
                         Firecrawl
                       </th>
+                      <th className="text-center px-16 py-12 text-label-small font-semibold text-black-alpha-56">
+                        Credits
+                      </th>
                       <th className="text-left px-16 py-12 text-label-small font-semibold text-black-alpha-56">
                         Created
                       </th>
@@ -365,6 +369,25 @@ export default function AdminPage() {
                         <td className="px-16 py-12 text-center">
                           {getFirecrawlStatusBadge(u.firecrawlStatus)}
                         </td>
+                        <td className="px-16 py-12 text-center">
+                          {u.firecrawlCredits !== null ? (
+                            <span
+                              className={`text-body-small font-medium ${
+                                u.firecrawlCredits === 0
+                                  ? "text-accent-crimson"
+                                  : u.firecrawlCredits < 100
+                                    ? "text-accent-honey"
+                                    : "text-accent-forest"
+                              }`}
+                            >
+                              {u.firecrawlCredits.toLocaleString()}
+                            </span>
+                          ) : (
+                            <span className="text-mono-x-small text-black-alpha-32">
+                              -
+                            </span>
+                          )}
+                        </td>
                         <td className="px-16 py-12">
                           <span className="text-mono-x-small text-black-alpha-48">
                             {formatDate(u.createdAt)}
@@ -409,21 +432,57 @@ export default function AdminPage() {
                     </button>
 
                     <div className="flex items-center gap-4">
-                      {Array.from({ length: totalPages }, (_, i) => i + 1).map(
-                        (page) => (
-                          <button
-                            key={page}
-                            onClick={() => goToPage(page)}
-                            className={`min-w-28 h-28 rounded-6 text-mono-x-small font-mono transition ${
-                              page === currentPage
-                                ? "bg-heat-100 text-white"
-                                : "hover:bg-black-alpha-4 text-black-alpha-48"
-                            }`}
-                          >
-                            {page}
-                          </button>
-                        ),
-                      )}
+                      {(() => {
+                        const pages: (number | string)[] = [];
+                        if (totalPages <= 7) {
+                          // Show all pages if 7 or fewer
+                          for (let i = 1; i <= totalPages; i++) pages.push(i);
+                        } else {
+                          // Always show first page
+                          pages.push(1);
+
+                          if (currentPage > 3) {
+                            pages.push("...");
+                          }
+
+                          // Show pages around current
+                          const start = Math.max(2, currentPage - 1);
+                          const end = Math.min(totalPages - 1, currentPage + 1);
+                          for (let i = start; i <= end; i++) {
+                            if (!pages.includes(i)) pages.push(i);
+                          }
+
+                          if (currentPage < totalPages - 2) {
+                            pages.push("...");
+                          }
+
+                          // Always show last page
+                          if (!pages.includes(totalPages)) pages.push(totalPages);
+                        }
+
+                        return pages.map((page, idx) =>
+                          page === "..." ? (
+                            <span
+                              key={`ellipsis-${idx}`}
+                              className="px-4 text-black-alpha-32"
+                            >
+                              ...
+                            </span>
+                          ) : (
+                            <button
+                              key={page}
+                              onClick={() => goToPage(page as number)}
+                              className={`min-w-28 h-28 rounded-6 text-mono-x-small font-mono transition ${
+                                page === currentPage
+                                  ? "bg-heat-100 text-white"
+                                  : "hover:bg-black-alpha-4 text-black-alpha-48"
+                              }`}
+                            >
+                              {page}
+                            </button>
+                          ),
+                        );
+                      })()}
                     </div>
 
                     <button

@@ -92,19 +92,35 @@ export async function createFirecrawlKeyForUser(
     );
 
     // Store the API key in user preferences
-    await supabaseServer.from("user_preferences").upsert(
-      {
-        user_id: userId,
-        firecrawl_api_key: apiKey,
-        firecrawl_key_status: "active",
-        firecrawl_key_created_at: new Date().toISOString(),
-        firecrawl_key_error: null,
-      },
-      {
-        onConflict: "user_id",
-      },
-    );
+    const { error: upsertError } = await supabaseServer
+      .from("user_preferences")
+      .upsert(
+        {
+          user_id: userId,
+          firecrawl_api_key: apiKey,
+          firecrawl_key_status: "active",
+          firecrawl_key_created_at: new Date().toISOString(),
+          firecrawl_key_error: null,
+        },
+        {
+          onConflict: "user_id",
+        },
+      );
 
+    if (upsertError) {
+      console.error(
+        `[Firecrawl Partner] Failed to save API key to database:`,
+        upsertError,
+      );
+      return {
+        success: false,
+        error: `Database error: ${upsertError.message}`,
+      };
+    }
+
+    console.log(
+      `[Firecrawl Partner] API key saved to database for user: ${userId}`,
+    );
     return { success: true, apiKey, alreadyExisted };
   } catch (error) {
     const errorMessage =

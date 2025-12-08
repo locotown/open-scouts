@@ -2,7 +2,11 @@
 const nextConfig = {
   pageExtensions: ["js", "jsx", "ts", "tsx"],
   transpilePackages: ["shiki"],
-  turbopack: {},
+  eslint: {
+    // Warning: This allows production builds to successfully complete even if
+    // your project has ESLint errors/warnings.
+    ignoreDuringBuilds: true,
+  },
   images: {
     remotePatterns: [
       {

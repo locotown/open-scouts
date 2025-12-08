@@ -60,6 +60,7 @@ export default function ExecutionsPage() {
   const [cooldownRemaining, setCooldownRemaining] = useState<number>(0);
   const triggerTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const executionCountBeforeTrigger = useRef<number>(0);
+  const [togglingActive, setTogglingActive] = useState(false);
 
   const triggerExecution = useCallback(async () => {
     setTriggering(true);
@@ -196,6 +197,31 @@ export default function ExecutionsPage() {
     loadScout();
     loadExecutions();
   }, [scoutId, loadExecutions]);
+
+  const toggleScoutActive = async () => {
+    if (!scout || togglingActive) return;
+
+    setTogglingActive(true);
+    const newActiveState = !scout.is_active;
+    const { error } = await supabase
+      .from("scouts")
+      .update({ is_active: newActiveState })
+      .eq("id", scoutId);
+
+    if (error) {
+      console.error("Error toggling scout:", error);
+      setTogglingActive(false);
+      return;
+    }
+
+    setScout((prev) => (prev ? { ...prev, is_active: newActiveState } : prev));
+    setTogglingActive(false);
+
+    posthog.capture(newActiveState ? "scout_enabled" : "scout_disabled", {
+      scout_id: scoutId,
+      scout_title: scout.title,
+    });
+  };
 
   // Subscribe to execution changes
   useEffect(() => {
@@ -390,6 +416,32 @@ export default function ExecutionsPage() {
           <Connector className="absolute -bottom-10 -right-[10.5px]" />
 
           <div className="flex flex-col items-center">
+            {/* Toggle - centered above title */}
+            <div className="relative mb-12">
+              <button
+                onClick={toggleScoutActive}
+                disabled={togglingActive}
+                className={`relative w-36 h-20 rounded-full transition-colors duration-200 ${
+                  scout.is_active ? "bg-heat-100" : "bg-gray-300"
+                } ${togglingActive ? "opacity-70 cursor-wait" : ""}`}
+              >
+                <div
+                  className={`absolute top-[2px] w-16 h-16 bg-white rounded-full shadow transition-transform duration-200 flex items-center justify-center ${scout.is_active ? "translate-x-[18px]" : "translate-x-[2px]"}`}
+                >
+                  {togglingActive && (
+                    <div className="w-10 h-10 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
+                  )}
+                </div>
+              </button>
+              <Tooltip
+                description={
+                  scout.is_active
+                    ? "Scout is active - click to disable"
+                    : "Scout is inactive - click to enable"
+                }
+              />
+            </div>
+
             {/* Title */}
             <h1 className="text-title-h3 lg:text-title-h2 font-semibold text-accent-black text-center mb-12">
               {scout.title || "Scout Executions"}
@@ -402,23 +454,8 @@ export default function ExecutionsPage() {
               </p>
             )}
 
-            {/* Status and Controls */}
+            {/* Controls */}
             <div className="flex items-center justify-center gap-16 lg:gap-24 flex-wrap">
-              {/* Status indicator */}
-              <div className="flex items-center gap-8">
-                <div
-                  className={`w-8 h-8 rounded-full ${
-                    scout.is_active ? "bg-green-500" : "bg-red-500"
-                  }`}
-                />
-                <span className="text-mono-x-small font-mono text-black-alpha-48 uppercase tracking-wider">
-                  {scout.is_active ? "Active" : "Inactive"}
-                </span>
-              </div>
-
-              {/* Divider */}
-              <div className="w-1 h-16 bg-border-faint hidden sm:block" />
-
               {/* Desktop controls */}
               <div className="hidden sm:flex items-center gap-12">
                 <div className="flex items-center gap-8">

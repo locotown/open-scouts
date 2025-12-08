@@ -41,6 +41,11 @@ interface FirecrawlInfo {
   error: string | null;
 }
 
+interface FirecrawlCredits {
+  remainingCredits: number | null;
+  planCredits: number | null;
+}
+
 export default function SettingsPage() {
   const router = useRouter();
   const { user, isLoading: authLoading } = useAuth();
@@ -77,6 +82,10 @@ export default function SettingsPage() {
   const [showApiKey, setShowApiKey] = useState(false);
   const [savingApiKey, setSavingApiKey] = useState(false);
   const [apiKeyMessage, setApiKeyMessage] = useState("");
+
+  // Sponsored credits state
+  const [sponsoredCredits, setSponsoredCredits] = useState<FirecrawlCredits | null>(null);
+  const [loadingCredits, setLoadingCredits] = useState(false);
   const [hasCustomKey, setHasCustomKey] = useState(false);
 
   // Load preferences (Firecrawl + Location)
@@ -111,8 +120,13 @@ export default function SettingsPage() {
           }
           if (data.firecrawl_custom_api_key) {
             setHasCustomKey(true);
-            // Show masked version
-            setCustomApiKey("fc-" + "•".repeat(32));
+            // Show masked version with first 3 and last 3 characters
+            const key = data.firecrawl_custom_api_key;
+            const masked =
+              key.length > 6
+                ? key.slice(0, 3) + "•".repeat(key.length - 6) + key.slice(-3)
+                : "•".repeat(key.length);
+            setCustomApiKey(masked);
           }
         } else {
           // No preferences yet - set defaults
@@ -130,6 +144,32 @@ export default function SettingsPage() {
     };
 
     loadPreferences();
+  }, [user?.id]);
+
+  // Fetch sponsored credits on page load
+  useEffect(() => {
+    const fetchCredits = async () => {
+      if (!user?.id) return;
+
+      setLoadingCredits(true);
+      try {
+        const response = await fetch("/api/firecrawl/credits");
+        if (response.ok) {
+          const result = await response.json();
+          if (result.success && result.data) {
+            setSponsoredCredits({
+              remainingCredits: result.data.remainingCredits,
+              planCredits: result.data.planCredits,
+            });
+          }
+        }
+      } catch {
+        // Silently handle errors
+      }
+      setLoadingCredits(false);
+    };
+
+    fetchCredits();
   }, [user?.id]);
 
   // Cooldown timer for regenerate button
@@ -377,10 +417,16 @@ export default function SettingsPage() {
         setHasCustomKey(true);
         setApiKeyMessage("API key saved successfully!");
         setFirecrawlInfo((prev) =>
-          prev ? { ...prev, status: "active" } : prev,
+          prev ? { ...prev, status: "active", error: null } : prev,
         );
-        // Mask the key after saving
-        setCustomApiKey("fc-" + "•".repeat(32));
+        // Mask the key after saving with first 3 and last 3 characters
+        const masked =
+          customApiKey.length > 6
+            ? customApiKey.slice(0, 3) +
+              "•".repeat(customApiKey.length - 6) +
+              customApiKey.slice(-3)
+            : "•".repeat(customApiKey.length);
+        setCustomApiKey(masked);
       } else {
         setHasCustomKey(false);
         setApiKeyMessage("API key removed");
@@ -528,101 +574,171 @@ export default function SettingsPage() {
                   {/* Status Badge */}
                   {firecrawlInfo && (
                     <div className="space-y-12">
-                      <div className="flex items-center gap-12">
-                        <span className="text-body-small text-black-alpha-56">
-                          Status:
-                        </span>
-                        {(() => {
-                          const display = getStatusDisplay(
-                            firecrawlInfo.status,
-                          );
-                          return (
-                            <div
-                              className={`inline-flex items-center gap-8 px-12 py-6 rounded-6 ${display.bgColor} ${display.color} border ${display.borderColor}`}
-                            >
-                              {display.icon}
-                              <span className="text-label-small font-medium">
-                                {display.text}
+                      {(() => {
+                        // Check if the error is about insufficient credits (402)
+                        const isInsufficientCredits =
+                          firecrawlInfo.error?.includes("402") ||
+                          firecrawlInfo.error
+                            ?.toLowerCase()
+                            .includes("insufficient credits");
+
+                        // If insufficient credits, show as "Connected" but with credits exhausted message
+                        const displayStatus = isInsufficientCredits
+                          ? "active"
+                          : firecrawlInfo.status;
+                        const display = getStatusDisplay(displayStatus);
+
+                        return (
+                          <>
+                            <div className="flex items-center gap-12">
+                              <span className="text-body-small text-black-alpha-56">
+                                Status:
                               </span>
+                              <div
+                                className={`inline-flex items-center gap-8 px-12 py-6 rounded-6 ${display.bgColor} ${display.color} border ${display.borderColor}`}
+                              >
+                                {display.icon}
+                                <span className="text-label-small font-medium">
+                                  {display.text}
+                                </span>
+                              </div>
                             </div>
-                          );
-                        })()}
-                      </div>
 
-                      {/* Created At */}
-                      {firecrawlInfo.createdAt &&
-                        firecrawlInfo.status === "active" && (
-                          <p className="text-body-small text-black-alpha-48">
-                            Connected since{" "}
-                            {new Date(
-                              firecrawlInfo.createdAt,
-                            ).toLocaleDateString()}
-                          </p>
-                        )}
-
-                      {/* Error Message */}
-                      {firecrawlInfo.error &&
-                        (firecrawlInfo.status === "failed" ||
-                          firecrawlInfo.status === "invalid") && (
-                          <div className="flex items-start gap-8 p-12 rounded-8 bg-accent-crimson/10 border border-accent-crimson/20">
-                            <AlertCircle className="w-16 h-16 text-accent-crimson mt-2 shrink-0" />
-                            <span className="text-body-small text-accent-crimson">
-                              {firecrawlInfo.error}
-                            </span>
-                          </div>
-                        )}
-
-                      {/* Regenerate Button - show for failed, invalid, or pending states */}
-                      {(firecrawlInfo.status === "failed" ||
-                        firecrawlInfo.status === "invalid" ||
-                        firecrawlInfo.status === "pending") && (
-                        <div className="pt-8">
-                          <Button
-                            onClick={regenerateFirecrawlKey}
-                            disabled={regeneratingKey || regenerateCooldown > 0}
-                            variant="secondary"
-                            className="flex items-center gap-8"
-                          >
-                            {regeneratingKey ? (
-                              <>
-                                <div className="animate-spin rounded-full h-16 w-16 border-2 border-black-alpha-32 border-t-transparent" />
-                                Connecting...
-                              </>
-                            ) : regenerateCooldown > 0 ? (
-                              <>
-                                <Clock className="w-16 h-16" />
-                                Wait {regenerateCooldown}s
-                              </>
-                            ) : (
-                              <>
-                                <RefreshCw className="w-16 h-16" />
-                                {firecrawlInfo.status === "pending"
-                                  ? "Connect Now"
-                                  : "Reconnect"}
-                              </>
-                            )}
-                          </Button>
-
-                          {regenerateMessage && (
-                            <div
-                              className={`flex items-start gap-8 mt-12 p-12 rounded-8 ${
-                                regenerateMessage.includes("successfully")
-                                  ? "bg-accent-forest/10 text-accent-forest border border-accent-forest/20"
-                                  : "bg-accent-crimson/10 text-accent-crimson border border-accent-crimson/20"
-                              }`}
-                            >
-                              {regenerateMessage.includes("successfully") ? (
-                                <Check className="w-16 h-16 mt-2 shrink-0" />
-                              ) : (
-                                <AlertCircle className="w-16 h-16 mt-2 shrink-0" />
+                            {/* Created At */}
+                            {firecrawlInfo.createdAt &&
+                              (firecrawlInfo.status === "active" ||
+                                isInsufficientCredits) && (
+                                <p className="text-body-small text-black-alpha-48">
+                                  Connected since{" "}
+                                  {new Date(
+                                    firecrawlInfo.createdAt,
+                                  ).toLocaleDateString()}
+                                </p>
                               )}
-                              <span className="text-body-small">
-                                {regenerateMessage}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      )}
+
+                            {/* Credits Display */}
+                            {(firecrawlInfo.status === "active" ||
+                              isInsufficientCredits) && (
+                              <div className="flex items-center gap-8">
+                                <span className="text-body-small text-black-alpha-56">
+                                  Credits:
+                                </span>
+                                {loadingCredits ? (
+                                  <span className="text-body-small text-black-alpha-48">
+                                    Loading...
+                                  </span>
+                                ) : sponsoredCredits?.remainingCredits !==
+                                    null &&
+                                  sponsoredCredits?.remainingCredits !==
+                                    undefined ? (
+                                  <span
+                                    className={`text-label-small font-medium ${
+                                      sponsoredCredits.remainingCredits === 0
+                                        ? "text-accent-crimson"
+                                        : sponsoredCredits.remainingCredits < 100
+                                          ? "text-heat-100"
+                                          : "text-accent-forest"
+                                    }`}
+                                  >
+                                    {sponsoredCredits.remainingCredits.toLocaleString()}
+                                    {sponsoredCredits.planCredits
+                                      ? ` / ${sponsoredCredits.planCredits.toLocaleString()}`
+                                      : ""}{" "}
+                                    remaining
+                                  </span>
+                                ) : (
+                                  <span className="text-body-small text-black-alpha-48">
+                                    Unable to fetch
+                                  </span>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Insufficient Credits Message */}
+                            {isInsufficientCredits && (
+                              <div className="flex items-start gap-8 p-12 rounded-8 bg-heat-100/10 border border-heat-100/20">
+                                <AlertTriangle className="w-16 h-16 text-heat-100 mt-2 shrink-0" />
+                                <span className="text-body-small text-heat-100">
+                                  Sponsored credits exhausted. Add your own API
+                                  key below for unlimited usage.
+                                </span>
+                              </div>
+                            )}
+
+                            {/* Error Message - only show for non-credit errors */}
+                            {firecrawlInfo.error &&
+                              !isInsufficientCredits &&
+                              (firecrawlInfo.status === "failed" ||
+                                firecrawlInfo.status === "invalid") && (
+                                <div className="flex items-start gap-8 p-12 rounded-8 bg-accent-crimson/10 border border-accent-crimson/20">
+                                  <AlertCircle className="w-16 h-16 text-accent-crimson mt-2 shrink-0" />
+                                  <span className="text-body-small text-accent-crimson">
+                                    {firecrawlInfo.error}
+                                  </span>
+                                </div>
+                              )}
+
+                            {/* Regenerate Button - show for failed, invalid, or pending states, but NOT for insufficient credits */}
+                            {!isInsufficientCredits &&
+                              (firecrawlInfo.status === "failed" ||
+                                firecrawlInfo.status === "invalid" ||
+                                firecrawlInfo.status === "pending") && (
+                                <div className="pt-8">
+                                  <Button
+                                    onClick={regenerateFirecrawlKey}
+                                    disabled={
+                                      regeneratingKey || regenerateCooldown > 0
+                                    }
+                                    variant="secondary"
+                                    className="flex items-center gap-8"
+                                  >
+                                    {regeneratingKey ? (
+                                      <>
+                                        <div className="animate-spin rounded-full h-16 w-16 border-2 border-black-alpha-32 border-t-transparent" />
+                                        Connecting...
+                                      </>
+                                    ) : regenerateCooldown > 0 ? (
+                                      <>
+                                        <Clock className="w-16 h-16" />
+                                        Wait {regenerateCooldown}s
+                                      </>
+                                    ) : (
+                                      <>
+                                        <RefreshCw className="w-16 h-16" />
+                                        {firecrawlInfo.status === "pending"
+                                          ? "Connect Now"
+                                          : "Reconnect"}
+                                      </>
+                                    )}
+                                  </Button>
+
+                                  {regenerateMessage && (
+                                    <div
+                                      className={`flex items-start gap-8 mt-12 p-12 rounded-8 ${
+                                        regenerateMessage.includes(
+                                          "successfully",
+                                        )
+                                          ? "bg-accent-forest/10 text-accent-forest border border-accent-forest/20"
+                                          : "bg-accent-crimson/10 text-accent-crimson border border-accent-crimson/20"
+                                      }`}
+                                    >
+                                      {regenerateMessage.includes(
+                                        "successfully",
+                                      ) ? (
+                                        <Check className="w-16 h-16 mt-2 shrink-0" />
+                                      ) : (
+                                        <AlertCircle className="w-16 h-16 mt-2 shrink-0" />
+                                      )}
+                                      <span className="text-body-small">
+                                        {regenerateMessage}
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                          </>
+                        );
+                      })()}
                     </div>
                   )}
                 </div>

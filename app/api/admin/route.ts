@@ -38,16 +38,39 @@ export async function GET() {
     }
 
     // Get all users from auth.users via service role
-    const { data: authUsers, error: usersError } =
-      await supabaseServer.auth.admin.listUsers();
+    // Fetch all pages of users (listUsers has a default limit of 50)
+    const allAuthUsers: any[] = [];
+    let page = 1;
+    const perPage = 1000;
 
-    if (usersError) {
-      console.error("Error fetching users:", usersError);
-      return NextResponse.json(
-        { error: "Failed to fetch users" },
-        { status: 500 },
-      );
+    while (true) {
+      const { data: authUsersPage, error: usersError } =
+        await supabaseServer.auth.admin.listUsers({
+          page,
+          perPage,
+        });
+
+      if (usersError) {
+        console.error("Error fetching users:", usersError);
+        return NextResponse.json(
+          { error: "Failed to fetch users" },
+          { status: 500 },
+        );
+      }
+
+      if (!authUsersPage.users || authUsersPage.users.length === 0) {
+        break;
+      }
+
+      allAuthUsers.push(...authUsersPage.users);
+
+      if (authUsersPage.users.length < perPage) {
+        break;
+      }
+      page++;
     }
+
+    const authUsers = { users: allAuthUsers };
 
     // Get scout counts per user
     const { data: scoutCounts, error: scoutError } = await supabaseServer
@@ -59,21 +82,72 @@ export async function GET() {
     }
 
     // Get execution counts per user (via scouts)
+    // First get all scouts with user_id for mapping
+    const { data: allScouts, error: scoutsMapError } = await supabaseServer
+      .from("scouts")
+      .select("id, user_id")
+      .limit(10000);
+
+    const scoutToUserMap = new Map<string, string>();
+    if (allScouts) {
+      for (const s of allScouts) {
+        scoutToUserMap.set(s.id, s.user_id);
+      }
+    }
+
     const { data: executions, error: execError } = await supabaseServer
       .from("scout_executions")
-      .select("scout_id, status, scouts!inner(user_id)");
+      .select("scout_id, status")
+      .limit(100000);
 
     if (execError) {
       console.error("Error fetching executions:", execError);
+    } else if (scoutsMapError) {
+      console.error("Error fetching scouts map:", scoutsMapError);
     }
 
     // Get user preferences for additional data
     const { data: preferences, error: prefError } = await supabaseServer
       .from("user_preferences")
-      .select("user_id, firecrawl_key_status, location");
+      .select("user_id, firecrawl_key_status, firecrawl_api_key, location");
 
     if (prefError) {
       console.error("Error fetching preferences:", prefError);
+    }
+
+    // Fetch credits for each user with a Firecrawl API key
+    const userCreditsMap = new Map<string, number | null>();
+    if (preferences) {
+      const creditsPromises = preferences
+        .filter((pref) => pref.firecrawl_api_key)
+        .map(async (pref) => {
+          try {
+            const response = await fetch(
+              "https://api.firecrawl.dev/v1/team/credit-usage",
+              {
+                method: "GET",
+                headers: {
+                  Authorization: `Bearer ${pref.firecrawl_api_key}`,
+                },
+              },
+            );
+            if (response.ok) {
+              const data = await response.json();
+              return {
+                userId: pref.user_id,
+                credits: data.data?.remaining_credits ?? null,
+              };
+            }
+            return { userId: pref.user_id, credits: null };
+          } catch {
+            return { userId: pref.user_id, credits: null };
+          }
+        });
+
+      const creditsResults = await Promise.all(creditsPromises);
+      for (const result of creditsResults) {
+        userCreditsMap.set(result.userId, result.credits);
+      }
     }
 
     // Build a map of user stats
@@ -85,6 +159,7 @@ export async function GET() {
         completedExecutions: number;
         failedExecutions: number;
         firecrawlStatus: string | null;
+        firecrawlCredits: number | null;
         hasLocation: boolean;
       }
     >();
@@ -100,6 +175,7 @@ export async function GET() {
             completedExecutions: 0,
             failedExecutions: 0,
             firecrawlStatus: null,
+            firecrawlCredits: null,
             hasLocation: false,
           });
         }
@@ -110,7 +186,7 @@ export async function GET() {
     // Count executions per user
     if (executions) {
       for (const exec of executions) {
-        const userId = (exec.scouts as any)?.user_id;
+        const userId = scoutToUserMap.get(exec.scout_id);
         if (userId) {
           if (!userStatsMap.has(userId)) {
             userStatsMap.set(userId, {
@@ -119,6 +195,7 @@ export async function GET() {
               completedExecutions: 0,
               failedExecutions: 0,
               firecrawlStatus: null,
+              firecrawlCredits: null,
               hasLocation: false,
             });
           }
@@ -143,11 +220,13 @@ export async function GET() {
             completedExecutions: 0,
             failedExecutions: 0,
             firecrawlStatus: null,
+            firecrawlCredits: null,
             hasLocation: false,
           });
         }
         const stats = userStatsMap.get(pref.user_id)!;
         stats.firecrawlStatus = pref.firecrawl_key_status;
+        stats.firecrawlCredits = userCreditsMap.get(pref.user_id) ?? null;
         stats.hasLocation = !!pref.location;
       }
     }
@@ -160,6 +239,7 @@ export async function GET() {
         completedExecutions: 0,
         failedExecutions: 0,
         firecrawlStatus: null,
+        firecrawlCredits: null,
         hasLocation: false,
       };
 
@@ -174,6 +254,7 @@ export async function GET() {
         completedExecutions: stats.completedExecutions,
         failedExecutions: stats.failedExecutions,
         firecrawlStatus: stats.firecrawlStatus,
+        firecrawlCredits: stats.firecrawlCredits,
         hasLocation: stats.hasLocation,
       };
     });
