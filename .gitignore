@@ -52,3 +52,9 @@ server/node_modules
 # Custom
 ## TypeScript
 *.tsbuildinfo
+
+# Supabase temp files
+supabase/.temp/
+
+# MCP config (local development)
+.mcp.json
