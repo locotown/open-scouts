@@ -457,7 +457,9 @@ export default function AdminPage() {
                           }
 
                           // Always show last page
-                          if (!pages.includes(totalPages)) pages.push(totalPages);
+                          if (!pages.includes(totalPages)) {
+                            pages.push(totalPages);
+                          }
                         }
 
                         return pages.map((page, idx) =>

@@ -108,7 +108,7 @@ export async function updateStep(
 
 /**
  * Gets the Firecrawl API key for a user.
- * Priority: 1) Custom API key, 2) Auto-generated key if active
+ * Priority: 1) Custom API key, 2) Auto-generated key if active, 3) Environment variable fallback
  * Returns null if no valid key is available.
  */
 export async function getFirecrawlKeyForUser(
@@ -124,6 +124,16 @@ export async function getFirecrawlKeyForUser(
 
     if (error) {
       console.log(`[Firecrawl] No preferences found for user ${userId}`);
+      // Fallback to environment variable
+      const envKey = Deno.env.get("FIRECRAWL_API_KEY");
+      if (envKey) {
+        console.log(`[Firecrawl] Using environment variable fallback`);
+        return {
+          apiKey: envKey,
+          usedFallback: true,
+          fallbackReason: "no_preferences_record",
+        };
+      }
       return {
         apiKey: null,
         usedFallback: false,
@@ -151,6 +161,17 @@ export async function getFirecrawlKeyForUser(
       };
     }
 
+    // Priority 3: Fallback to environment variable
+    const envKey = Deno.env.get("FIRECRAWL_API_KEY");
+    if (envKey) {
+      console.log(`[Firecrawl] Using environment variable fallback (user key not available)`);
+      return {
+        apiKey: envKey,
+        usedFallback: true,
+        fallbackReason: firecrawl_key_status || "no_valid_key",
+      };
+    }
+
     // No valid key found - log the reason
     let fallbackReason: string;
     if (!firecrawl_api_key && !firecrawl_custom_api_key) {
@@ -173,6 +194,16 @@ export async function getFirecrawlKeyForUser(
     };
   } catch (error: any) {
     console.error(`[Firecrawl] Error fetching user key: ${error.message}`);
+    // Fallback to environment variable on error
+    const envKey = Deno.env.get("FIRECRAWL_API_KEY");
+    if (envKey) {
+      console.log(`[Firecrawl] Using environment variable fallback after error`);
+      return {
+        apiKey: envKey,
+        usedFallback: true,
+        fallbackReason: `error: ${error.message}`,
+      };
+    }
     return {
       apiKey: null,
       usedFallback: false,

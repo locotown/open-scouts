@@ -22,6 +22,7 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  MessageSquare,
 } from "lucide-react";
 import { Connector } from "@/components/shared/layout/curvy-rect";
 import LocationSelector, { UserLocation } from "@/components/location-selector";
@@ -84,9 +85,17 @@ export default function SettingsPage() {
   const [apiKeyMessage, setApiKeyMessage] = useState("");
 
   // Sponsored credits state
-  const [sponsoredCredits, setSponsoredCredits] = useState<FirecrawlCredits | null>(null);
+  const [sponsoredCredits, setSponsoredCredits] =
+    useState<FirecrawlCredits | null>(null);
   const [loadingCredits, setLoadingCredits] = useState(false);
   const [hasCustomKey, setHasCustomKey] = useState(false);
+
+  // Slack state
+  const [slackWebhookUrl, setSlackWebhookUrl] = useState("");
+  const [savingSlack, setSavingSlack] = useState(false);
+  const [slackMessage, setSlackMessage] = useState("");
+  const [testingSlack, setTestingSlack] = useState(false);
+  const [slackTestCooldown, setSlackTestCooldown] = useState(0);
 
   // Load preferences (Firecrawl + Location)
   useEffect(() => {
@@ -101,7 +110,7 @@ export default function SettingsPage() {
         const { data } = await supabase
           .from("user_preferences")
           .select(
-            "firecrawl_api_key, firecrawl_key_status, firecrawl_key_created_at, firecrawl_key_error, firecrawl_custom_api_key, location",
+            "firecrawl_api_key, firecrawl_key_status, firecrawl_key_created_at, firecrawl_key_error, firecrawl_custom_api_key, location, slack_webhook_url",
           )
           .eq("user_id", user.id)
           .maybeSingle();
@@ -127,6 +136,15 @@ export default function SettingsPage() {
                 ? key.slice(0, 3) + "•".repeat(key.length - 6) + key.slice(-3)
                 : "•".repeat(key.length);
             setCustomApiKey(masked);
+          }
+          if (data.slack_webhook_url) {
+            // Show masked webhook URL
+            const webhook = data.slack_webhook_url;
+            const masked =
+              webhook.length > 40
+                ? webhook.slice(0, 35) + "..." + webhook.slice(-8)
+                : webhook;
+            setSlackWebhookUrl(masked);
           }
         } else {
           // No preferences yet - set defaults
@@ -452,6 +470,142 @@ export default function SettingsPage() {
     await saveCustomApiKey();
   };
 
+  const saveSlackWebhook = async () => {
+    if (!user?.id) return;
+
+    // Don't save if it's a masked placeholder
+    if (slackWebhookUrl.includes("...")) {
+      setSlackMessage("Please enter a new webhook URL");
+      return;
+    }
+
+    // Validate format
+    if (
+      slackWebhookUrl &&
+      !slackWebhookUrl.startsWith("https://hooks.slack.com/")
+    ) {
+      setSlackMessage("Webhook URL must start with 'https://hooks.slack.com/'");
+      return;
+    }
+
+    setSavingSlack(true);
+    setSlackMessage("");
+
+    try {
+      // Check if user_preferences row exists
+      const { data: existing } = await supabase
+        .from("user_preferences")
+        .select("id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      const updateData = {
+        slack_webhook_url: slackWebhookUrl || null,
+      };
+
+      if (existing) {
+        const { error } = await supabase
+          .from("user_preferences")
+          .update(updateData)
+          .eq("user_id", user.id);
+
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from("user_preferences")
+          .insert({ user_id: user.id, ...updateData });
+
+        if (error) throw error;
+      }
+
+      if (slackWebhookUrl) {
+        setSlackMessage("Slack webhook saved successfully!");
+        // Mask the URL after saving
+        const masked =
+          slackWebhookUrl.length > 40
+            ? slackWebhookUrl.slice(0, 35) + "..." + slackWebhookUrl.slice(-8)
+            : slackWebhookUrl;
+        setSlackWebhookUrl(masked);
+      } else {
+        setSlackMessage("Slack webhook removed");
+      }
+
+      posthog.capture("slack_webhook_saved", {
+        has_webhook: !!slackWebhookUrl,
+      });
+
+      setTimeout(() => setSlackMessage(""), 3000);
+    } catch (error) {
+      setSlackMessage(
+        error instanceof Error ? error.message : "Failed to save webhook",
+      );
+    }
+
+    setSavingSlack(false);
+  };
+
+  const sendTestSlack = async () => {
+    if (slackTestCooldown > 0) return;
+
+    // Check if URL is masked (means it's already saved)
+    const urlToTest = slackWebhookUrl.includes("...")
+      ? null // Will use saved URL from backend
+      : slackWebhookUrl;
+
+    if (!urlToTest && !slackWebhookUrl) {
+      setSlackMessage("Please enter a webhook URL first");
+      return;
+    }
+
+    setTestingSlack(true);
+    setSlackMessage("");
+
+    try {
+      const response = await fetch("/api/send-test-slack", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ webhookUrl: urlToTest }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setSlackMessage(data.error || "Failed to send test notification");
+        if (response.status === 429 && data.cooldownRemaining) {
+          setSlackTestCooldown(data.cooldownRemaining);
+        }
+      } else {
+        setSlackMessage("Test message sent! Check your Slack channel.");
+        setSlackTestCooldown(60);
+
+        posthog.capture("slack_test_sent", {
+          status: "success",
+        });
+
+        setTimeout(() => setSlackMessage(""), 5000);
+      }
+    } catch (error) {
+      setSlackMessage(
+        error instanceof Error ? error.message : "Failed to send test",
+      );
+    }
+
+    setTestingSlack(false);
+  };
+
+  // Cooldown timer for Slack test button
+  useEffect(() => {
+    if (slackTestCooldown <= 0) return;
+
+    const timer = setInterval(() => {
+      setSlackTestCooldown((prev) => Math.max(0, prev - 1));
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [slackTestCooldown]);
+
   const getStatusDisplay = (status: FirecrawlKeyStatus) => {
     switch (status) {
       case "active":
@@ -635,7 +789,8 @@ export default function SettingsPage() {
                                     className={`text-label-small font-medium ${
                                       sponsoredCredits.remainingCredits === 0
                                         ? "text-accent-crimson"
-                                        : sponsoredCredits.remainingCredits < 100
+                                        : sponsoredCredits.remainingCredits <
+                                            100
                                           ? "text-heat-100"
                                           : "text-accent-forest"
                                     }`}
@@ -1038,12 +1193,128 @@ export default function SettingsPage() {
                     )}
                   </div>
                 </div>
+
+                {/* Slack Notification Section */}
+                <div className="pt-24 border-t border-border-faint">
+                  <div className="flex items-center gap-8 mb-8">
+                    <MessageSquare className="w-16 h-16 text-black-alpha-48" />
+                    <h3 className="text-label-medium font-semibold text-accent-black">
+                      Slack Notifications
+                    </h3>
+                    {slackWebhookUrl && (
+                      <span className="text-mono-x-small text-accent-forest bg-accent-forest/10 px-8 py-2 rounded-4">
+                        Configured
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-body-small text-black-alpha-48 mb-16">
+                    Receive scout notifications in your Slack channel.{" "}
+                    <a
+                      href="https://api.slack.com/messaging/webhooks"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-heat-100 hover:underline inline-flex items-center gap-4"
+                    >
+                      Learn how to create a webhook
+                      <ExternalLink className="w-12 h-12" />
+                    </a>
+                  </p>
+
+                  <div className="space-y-12">
+                    <input
+                      type="text"
+                      value={slackWebhookUrl}
+                      onChange={(e) => {
+                        setSlackWebhookUrl(e.target.value);
+                        setSlackMessage("");
+                      }}
+                      onFocus={() => {
+                        // Clear masked placeholder on focus
+                        if (slackWebhookUrl.includes("...")) {
+                          setSlackWebhookUrl("");
+                        }
+                      }}
+                      placeholder="https://hooks.slack.com/services/T00000000/B00000000/XXXX..."
+                      className="w-full h-44 px-16 rounded-8 border border-border-muted bg-background-base text-body-medium font-mono focus:outline-none focus:border-heat-100 focus:ring-1 focus:ring-heat-100"
+                    />
+
+                    <div className="flex gap-12">
+                      <Button
+                        onClick={saveSlackWebhook}
+                        disabled={savingSlack || !slackWebhookUrl}
+                        variant="secondary"
+                        className="flex items-center gap-8"
+                      >
+                        {savingSlack ? (
+                          <>
+                            <div className="animate-spin rounded-full h-16 w-16 border-2 border-black-alpha-32 border-t-transparent" />
+                            Saving...
+                          </>
+                        ) : (
+                          <>
+                            <Check className="w-16 h-16" />
+                            Save Webhook
+                          </>
+                        )}
+                      </Button>
+
+                      <Button
+                        onClick={sendTestSlack}
+                        disabled={
+                          testingSlack ||
+                          slackTestCooldown > 0 ||
+                          !slackWebhookUrl
+                        }
+                        variant="secondary"
+                        className="flex items-center gap-8"
+                      >
+                        {testingSlack ? (
+                          <>
+                            <div className="animate-spin rounded-full h-16 w-16 border-2 border-black-alpha-32 border-t-transparent" />
+                            Sending...
+                          </>
+                        ) : slackTestCooldown > 0 ? (
+                          <>
+                            <Clock className="w-16 h-16" />
+                            Wait {slackTestCooldown}s
+                          </>
+                        ) : (
+                          <>
+                            <MessageSquare className="w-16 h-16" />
+                            Send Test
+                          </>
+                        )}
+                      </Button>
+                    </div>
+
+                    {slackMessage && (
+                      <div
+                        className={`flex items-start gap-8 p-12 rounded-8 ${
+                          slackMessage.includes("success") ||
+                          slackMessage.includes("sent")
+                            ? "bg-accent-forest/10 text-accent-forest border border-accent-forest/20"
+                            : "bg-accent-crimson/10 text-accent-crimson border border-accent-crimson/20"
+                        }`}
+                      >
+                        {slackMessage.includes("success") ||
+                        slackMessage.includes("sent") ? (
+                          <Check className="w-16 h-16 mt-2 shrink-0" />
+                        ) : (
+                          <AlertCircle className="w-16 h-16 mt-2 shrink-0" />
+                        )}
+                        <span className="text-body-small leading-relaxed">
+                          {slackMessage}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
 
-              {/* Future Settings Placeholder */}
+              {/* Future Settings Footer */}
               <div className="px-24 py-16 border-t border-border-faint bg-background-base">
                 <p className="text-mono-x-small font-mono text-black-alpha-32">
-                  More notification options (SMS, Slack, Discord) coming soon...
+                  More notification options (SMS, Discord) coming soon...
                 </p>
               </div>
             </div>

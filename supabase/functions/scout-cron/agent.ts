@@ -11,6 +11,7 @@ import {
 } from "./helpers.ts";
 import { executeSearchTool, executeScrapeTool } from "./tools.ts";
 import { sendScoutSuccessEmail } from "./email.ts";
+import { sendSlackNotification } from "./slack.ts";
 import {
   trackExecutionStarted,
   trackExecutionCompleted,
@@ -674,8 +675,9 @@ REMINDER: Write your final response like a NEWS BRIEF. DO NOT mention your proce
           })
           .eq("id", executionId);
 
-        // Send email notification if scout was successful AND not a duplicate
+        // Send notifications if scout was successful AND not a duplicate
         if (scoutResponse.taskCompleted && !isDuplicate) {
+          // Send email notification
           console.log(`Scout found results, sending email notification...`);
           try {
             await sendScoutSuccessEmail(scout, scoutResponse, supabase);
@@ -684,8 +686,16 @@ REMINDER: Write your final response like a NEWS BRIEF. DO NOT mention your proce
             console.error(`Failed to send email notification:`, emailError.message);
             trackEmailNotificationSent(scout.user_id, scout.id, executionId, scout.title, false, emailError.message);
           }
+
+          // Send Slack notification
+          console.log(`Sending Slack notification...`);
+          try {
+            await sendSlackNotification(scout, scoutResponse, supabase);
+          } catch (slackError: any) {
+            console.error(`Failed to send Slack notification:`, slackError.message);
+          }
         } else if (isDuplicate) {
-          console.log(`📧 Skipping email notification - result is too similar to a previous finding`);
+          console.log(`📧 Skipping notifications - result is too similar to a previous finding`);
         }
 
         // Track execution completed
