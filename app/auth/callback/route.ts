@@ -34,27 +34,35 @@ export async function GET(request: Request) {
           preferences?.firecrawl_key_status === "active";
 
         // PostHog: Identify user and track Google OAuth login on server side
-        const posthog = getPostHogClient();
-        const isNewUser = !hasActiveKey;
+        // PostHog is optional - don't fail auth if not configured
+        try {
+          const posthog = getPostHogClient();
+          const isNewUser = !hasActiveKey;
 
-        posthog.identify({
-          distinctId: user.id,
-          properties: {
-            email: user.email,
-          },
-        });
+          posthog.identify({
+            distinctId: user.id,
+            properties: {
+              email: user.email,
+            },
+          });
 
-        posthog.capture({
-          distinctId: user.id,
-          event: isNewUser ? "user_signed_up" : "user_logged_in",
-          properties: {
-            method: "google",
-            email: user.email,
-            is_new_user: isNewUser,
-          },
-        });
+          posthog.capture({
+            distinctId: user.id,
+            event: isNewUser ? "user_signed_up" : "user_logged_in",
+            properties: {
+              method: "google",
+              email: user.email,
+              is_new_user: isNewUser,
+            },
+          });
 
-        await posthog.shutdown();
+          await posthog.shutdown();
+        } catch {
+          // PostHog is optional, continue without it
+          console.log(
+            "[Auth Callback] PostHog not configured, skipping analytics",
+          );
+        }
 
         if (!hasActiveKey) {
           try {
